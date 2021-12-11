@@ -1,0 +1,871 @@
+---
+title: "record"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(shiny)
+library(tidyverse)
+library(lubridate)
+library(gganimate)
+
+# passenger data
+passenger <- read_csv("data/passenger.csv") %>% 
+  mutate(
+    date = ymd(date)
+  )
+
+
+# crime data
+subwaycrime_with_station <- 
+  read_csv("data/subwaycrime_with_station.csv")  %>% 
+  filter(
+    cmplnt_to_dt != "NA"
+  ) %>% 
+  mutate(
+    date = mdy(cmplnt_to_dt),
+    linename = closest_line,
+    station = closest_station,
+    station_line = str_c(closest_station,closest_line,sep = " line:"),
+  ) %>% 
+  select(station_line,linename,ofns_desc,pd_desc,law_cat_cd,date)
+
+
+ui <- navbarPage(
+  title = "Subway Passenger",
+  # first Page
+  tabPanel(
+    "Line",
+  sidebarLayout( 
+    sidebarPanel(
+      h2("Choose Subway and Time"),
+      selectInput("subwayline", label = h4("Subway Lines"),
+                             choices = list("1" = 1,"2" = 2, "3" = 3,"4" = 4,"5" = 5,"6" = 6,"7" = 7,"A" = "A","B" = "B","C" = "C","D" = "D","E" = "E","F" = "F", "G" = "G","J" = "J","L" = "L","M" = "M","N" = "N","Q" = "Q","R" = "R","S" = "S","W" = "W","Z" = "Z"),
+                             selected = 1),
+      dateRangeInput("dates", label = h4("Date range"),
+                     start  = "2021-01-01",
+                     end    = "2021-01-02",
+                     min    = "2021-01-01",
+                     max    = "2021-10-31")
+    ), 
+    mainPanel(
+      h2("Single Line of Subway Passenger"),
+      tabsetPanel( 
+        tabPanel("Line Animation",  
+                 h3("Daily Passenger of Line"),
+                 p("This is the animation of daily passenger of the line you are interested in "),
+                 imageOutput(outputId = "daily")), 
+        tabPanel("Datatable", 
+                 h3("Daily Passenger of Line"),
+                 p("This is the datatable of daily passenger of the line you are interested in "),
+                 DT::dataTableOutput("mytable1")),
+        tabPanel("Animation", 
+                 h3("Daily Passenger of Each Station"),
+                 p("This is the animation of daily passenger of each station in the line you are interested in "),
+                 imageOutput(outputId = "station")),
+        tabPanel("Datatable", 
+                 h3("Daily Passenger of Each Station"),
+                 p("This is the table of daily passenger of each station in the line you are interested in "),
+                 DT::dataTableOutput("mytable2"))
+        )
+      )
+    )
+  ),
+  tabPanel(
+    "Crime",
+    sidebarLayout( 
+      sidebarPanel(
+        h2("Choose Subway and Time"),
+        selectInput("subwayline", label = h4("Subway Lines"),
+                    choices = list("1" = 1,"2" = 2, "3" = 3,"4" = 4,"5" = 5,"6" = 6,"7" = 7,"A" = "A","B" = "B","C" = "C","D" = "D","E" = "E","F" = "F", "G" = "G","J" = "J","L" = "L","M" = "M","N" = "N","Q" = "Q","R" = "R","S" = "S","W" = "W","Z" = "Z"),
+                    selected = 1),
+        dateRangeInput("dates", label = h4("Date range"),
+                       start  = "2021-01-01",
+                       end    = "2021-01-02",
+                       min    = "2021-01-01",
+                       max    = "2021-10-31")
+      ), 
+      mainPanel(
+        h2("Single Line of Subway Crime"),
+        tabPanel("Datatable", 
+                 DT::dataTableOutput("mytable3")
+        )
+      )
+    )
+  ),
+  tabPanel(
+    "Home",
+    href= "http://www.git.com"
+  )
+)
+
+
+
+server <- function(input, output) {
+  specific_line <- reactive({as.character(input$subwayline)})  
+  start_date <- reactive({ymd(input$dates[1])}) 
+  end_date <- reactive({ ymd(input$dates[2])})
+
+  # daily passenger gif of line
+  output$daily <- renderImage({ 
+
+    
+    outfile <- tempfile(fileext='.gif')
+    
+    p <- passenger %>% 
+      filter(start_date() <= date & date <= end_date(),
+             str_detect(linename,specific_line())
+      ) %>% 
+      mutate(
+        entry_single = entry_data/nchar(linename),
+        exit_single = exit_data/nchar(linename),
+        total = entry_single + exit_single
+      ) %>% 
+      group_by(date) %>% 
+      summarize(
+        passenger = sum(total,na.rm = TRUE)
+      ) %>%  
+      ggplot(aes(x = date,y = passenger)) +
+      geom_line() +
+      transition_reveal(date) +
+      ease_aes('linear')
+                       
+    
+    anim_save("outfile.gif", animate(p))
+    
+    list(src = "outfile.gif",
+         contentType = 'image/gif',
+         width = 700,
+         height = 700
+         # alt = "This is alternate text"
+         )
+    },
+    deleteFile = TRUE)
+  
+  # daily passenger table of line passenger
+  output$mytable1 <- DT::renderDataTable ({
+    
+    Datatable <- 
+      passenger %>% 
+      filter(start_date() <= date & date <= end_date(),
+             str_detect(linename,specific_line())
+      ) %>% 
+      mutate(
+        entry_single = entry_data/nchar(linename),
+        exit_single = exit_data/nchar(linename),
+        total = entry_single + exit_single
+      ) %>% 
+      group_by(date) %>% 
+      summarize(passenger = sum(total,na.rm = TRUE)) %>% 
+      mutate(passenger = unlist(passenger)) %>% 
+      ungroup()
+
+    
+    DT::datatable(Datatable, 
+                  options = list(lengthMenu = list(c(5, 15, -1), c('5', '15', 'All')),pageLength = 15) 
+    )
+  })
+  
+
+  
+  # daily passenger gif of station
+  output$station <- renderImage({
+    
+    outfile <- tempfile(fileext='.gif')
+    
+    p <- 
+      passenger %>% 
+      filter(start_date() <= date & date <= end_date(),
+             str_detect(linename,specific_line())
+      ) %>% 
+      mutate(
+        entry_single = entry_data/nchar(linename),
+        exit_single = exit_data/nchar(linename),
+        total = entry_single + exit_single
+      ) %>% 
+      group_by(date,station) %>% 
+      summarize(
+        passenger = sum(total,na.rm = TRUE)
+      ) %>% 
+      ungroup() %>% 
+      mutate(
+        rank = order(order(passenger, decreasing = TRUE)),
+        station = fct_reorder(station, passenger)
+        )%>% 
+      ggplot(aes(x = station,y = passenger)) +
+      geom_bar(stat = "identity") +
+      coord_flip() +
+      labs(title = "Year: {frame_time}")+
+      transition_time(date) +
+      ease_aes('linear')
+
+    
+    anim_save("outfile.gif", animate(p))
+    
+    list(src = "outfile.gif",
+         contentType = 'image/gif',
+         width = 700,
+         height = 700
+         # alt = "This is alternate text"
+    )}, 
+    deleteFile = TRUE)
+
+
+# daily passenger table of passenger
+  output$mytable2 <- DT::renderDataTable ({
+  
+    Datatable <- 
+      passenger %>% 
+    filter(start_date() <= date & date <= end_date(),
+           str_detect(linename,specific_line())
+    ) %>% 
+    mutate(
+      entry_single = entry_data/nchar(linename),
+      exit_single = exit_data/nchar(linename),
+      total = entry_single + exit_single
+    ) %>% 
+    group_by(date,station) %>% 
+    summarize(passenger = sum(total,na.rm = TRUE)) %>% 
+    mutate(passenger = unlist(passenger)) %>% 
+    ungroup()
+
+  
+  DT::datatable(Datatable, 
+                options = list(lengthMenu = list(c(5, 15, -1), c('5', '15', 'All')),pageLength = 15) 
+  )
+  })
+  
+
+# daily passenger table of crime ({
+  output$mytable3 <- DT::renderDataTable ({
+  Datatable3 <- 
+    subwaycrime_with_station %>% 
+    filter(start_date() <= date & date <= end_date(),
+           str_detect(linename,specific_line())
+    ) %>% 
+    arrange(date,station_line)
+
+    
+
+  
+  DT::datatable(Datatable3, 
+                options = list(lengthMenu = list(c(5, 15, -1), c('5', '15', 'All')),pageLength = 15) 
+  )
+})
+  
+}
+
+# Create Shiny app ----
+shinyApp(ui = ui, server = server)
+```
+
+time
+```{r}
+library(shiny)
+library(tidyverse)
+library(lubridate)
+library(leaflet)
+library(plotly)
+library(shinyTime)
+
+# color
+pal <- colorFactor(palette = c("blue", "azure4", "orange",'green','brown','yellow','red','forestgreen','purple'), 
+              levels = c('8 Avenue(ACE)',
+                         'Shuttle(S)',
+                         '6 Avenue(BDFM)',
+                         'Brooklyn-Queens Crosstown(G)',
+                         '14 St-Canarsie(L)',
+                         'Broadway(NQRW)',
+                         '7 Avenue(123)',
+                         'Lexington Av(456)',
+                         'Flushing(7)'))
+
+
+
+# passenger data
+passenger <- read_csv("data/passenger_time.csv") 
+
+
+
+# crime data
+subwaycrime_with_station <- 
+  read_csv("data/subwaycrime_with_station.csv")  %>% 
+  filter(
+    cmplnt_to_dt != "NA"
+  ) %>% 
+  mutate(
+    date = mdy(cmplnt_to_dt),
+    linename = closest_line,
+    station = closest_station,
+    station_line = str_c(closest_station,closest_line,sep = " line:"),
+  ) %>% 
+  select(station_line,station,linename,ofns_desc,pd_desc,law_cat_cd,date)
+
+# station data
+subway_info_final3 <- read_csv("data/subway_info_final3.csv")
+
+# ui
+ui <- navbarPage(
+  title = "Subway Passenger",
+  # first Page
+  tabPanel(
+    "Line",
+    sidebarLayout( 
+      sidebarPanel(
+        h2("Choose Subway and Time"),
+        selectInput("subwayline", label = h4("Subway Lines"),
+                    choices = list("1" = 1,"2" = 2, "3" = 3,"4" = 4,"5" = 5,"6" = 6,"7" = 7,"A" = "A","B" = "B","C" = "C","D" = "D","E" = "E","F" = "F", "G" = "G","J" = "J","L" = "L","M" = "M","N" = "N","Q" = "Q","R" = "R","S" = "S","W" = "W","Z" = "Z"),
+                    selected = 1),
+        selectInput("input_type", "Input type",
+                    c("slider","date")),
+        uiOutput("ui"),
+        #timeInput("time", "Time:", value = Sys.time()),
+        #plotOutput("clock",width = 250,height = 250),
+        actionButton("update","Update"),
+      ), 
+      mainPanel(
+        h2("Single Line of Subway Passenger"),
+        tabsetPanel( 
+          tabPanel("Plot",  
+                   h3("Daily Passenger of Line in Map"),
+                   p("This is the map daily passenger of the line you are interested in "),
+                   
+                   leafletOutput(outputId = "mymap1",width = "100%",height = "800")), 
+          tabPanel("Passenger(Plot)", 
+                   h3("Daily Passenger of Each Station"),
+                   p("This is the plot daily passenger of each station in the line you are interested in "),
+                   plotlyOutput(outputId = "station"),
+          ),
+          tabPanel("Passenger(Table)", 
+                   wellPanel(
+                     h3("Daily Passenger of Line"),
+                     DT::dataTableOutput(outputId = "mytable1"),
+                     h3("Daily Passenger of Each Station"),
+                     DT::dataTableOutput(outputId = "mytable2")
+                   )
+          ),
+          tabPanel("Crime", 
+                   h3("Daily Passenger of Each Station"),
+                   p("This is the table of crime report in the line you are interested in "),
+                   DT::dataTableOutput(outputId = "mytable3"))
+        )
+      )
+    )
+  ),
+  tabPanel(
+    "Home",
+    href = "http://www.git.com"
+  )
+)
+
+
+
+server <- function(input, output) {
+  # choose of input
+  output$ui <- renderUI({
+    if (is.null(input$input_type))
+      return()
+    
+    switch(input$input_type,
+           "slider" = sliderInput("dates", "Date",
+                                  min = ymd("2021-01-01"),
+                                  max = ymd("2021-10-31"),
+                                  value = ymd("2021-01-01")),
+           "date" = dateInput("dates", "Date",
+                                        min = ymd("2021-01-01"),
+                                        max = ymd("2021-10-31"),
+                                        value = ymd("2021-01-01")
+           )
+           
+    )
+  })
+  
+  # input
+  specific_line <- reactive({as.character(input$subwayline)})  
+  specific_date <- reactive({ymd(input$dates)})
+  
+  
+  # action button
+  specific_time <- eventReactive(input$update,{hms(strftime(input$time,"%T"))})
+  
+  passenger_date <- eventReactive(input$update,{
+    passenger %>% 
+      filter(
+        date == specific_date(),
+#       start_time < specific_time(),
+#       specific_time() < end_time,
+        str_detect(linename,specific_line())
+      ) %>% 
+      mutate(
+        total = entry_data + exit_data
+      ) %>% 
+      relocate(station,linename,date,start_time,end_time)
+    
+  }
+  )
+  
+  subway_crime <- eventReactive(input$update,{
+    subwaycrime_with_station %>% 
+      filter(date == specific_date(),
+             str_detect(linename,specific_line()))
+  })
+  
+
+  
+  # clock
+#  output$clock <- renderPlot({
+#    
+#    time <- 
+#      data.frame(
+#        list(
+#          x = c(
+#            ifelse(hour(specific_time()) >= 12, 
+#                   hour(specific_time()) - 12 + (minute(specific_time()))/60, 
+#                   hour(specific_time())      + (minute(specific_time()))/60 ), 
+#            (minute(specific_time()))*0.2 
+#          ), 
+#          y=c(.9, 1.3)
+#        )
+#      )
+#    
+#    ggplot(time, aes(xmin = x, xmax = x+0.1, ymin = 0, ymax = y))+
+#      geom_rect(aes(alpha=0.5))+
+#      scale_x_continuous(limits=c(0,11.98333), breaks=0:11, 
+#                         labels=c(12, 1:11))+
+#      scale_y_continuous(limits=c(0,1.3)) + 
+#      scale_alpha() + 
+#      theme_bw()+
+#      coord_polar() + 
+#      theme(axis.text.y=element_blank(), axis.ticks=element_blank(), 
+#            panel.grid.major=element_blank(), 
+#            strip.background = element_rect(colour = 'white'),
+#            legend.title = element_blank(),
+#            legend.position = "none")
+#    
+#  })
+  
+  
+ # maymap1: daily passenger in map
+ output$mymap1 <- renderLeaflet({
+   
+   passenger_date <- 
+     left_join(passenger_date(),subway_info_final3,by=c("station","linename"))
+   
+#   if (hour(specific_time()) >= 7 & hour(specific_time()) < 17 ){
+   passenger_date %>% 
+     mutate(
+       click_label = 
+         str_c("<b>Station:", station, "</b><br>Line:", linename, " <br>Entry:", round(entry_data)," <br>Exit:", round(exit_data),"<br>Total:", round(total))
+     ) %>% 
+     leaflet() %>% 
+     addProviderTiles(providers$CartoDB.Positron) %>% 
+     addCircleMarkers(~long, 
+                      ~lat, 
+                      radius = ~log(total)/2, 
+                      color = ~pal(service), 
+                      popup = ~click_label)
+#   } else {
+#   passenger_date %>% 
+#     mutate(
+#       click_label = 
+#         str_c("<b>Station:", station, "</b><br>Line:", linename, " <br>Entry:", round(entry_data)," <br>Exit:", round(exit_data),"<br>Total:", round(total))
+#     ) %>% 
+#     leaflet() %>% 
+#     addProviderTiles(providers$CartoDB.DarkMatter) %>% 
+#     addCircleMarkers(~long, 
+#                      ~lat, 
+#                      radius = ~log(total)/2, 
+#                      color = ~pal(service), 
+#                      popup = ~click_label)
+#   }
+   
+#
+   
+ })
+ 
+ # station: plot of daily station passenger
+ output$station <- renderPlotly({
+   passenger_date <- 
+     left_join(passenger_date(),subway_info_final3,by = c("station","linename"))
+   
+   passenger_date %>% 
+     mutate(
+       entry_single = round(entry_data/nchar(linename)),
+       exit_single  = round(exit_data/nchar(linename)),
+       total        = entry_single + exit_single,
+       station_line      = fct_reorder(station_line,total)
+     ) %>% 
+     plot_ly(
+       x = ~station_line, y = ~total,type = "bar",alpha = 0.5, color = ~pal(service), width = 800, height = 800
+     ) %>% 
+     layout(autosize = F,showlegend = FALSE) 
+   
+ })
+ 
+ #mytable 1: daily passenger table of line passenger
+ output$mytable1 <- DT::renderDataTable({
+   
+   Datatable <- 
+     passenger_date() %>% 
+     mutate(
+       entry_single = round(entry_data/nchar(linename)),
+       exit_single = round(exit_data/nchar(linename)),
+       total = entry_single + exit_single
+     ) %>% 
+     group_by(date,start_time,end_time) %>% 
+     summarize(Entry = sum(entry_single,na.rm = TRUE),
+               Exit  = sum(exit_single,na.rm = TRUE),
+               Total = sum(total,na.rm = TRUE),
+     ) %>% 
+     mutate(Entry = unlist(Entry),
+            Exit  = unlist(Exit),
+            Total = unlist(Total)) %>% 
+     ungroup()
+   
+   
+   DT::datatable(Datatable, 
+                 options = list(lengthMenu = list(c(5, 10, -1), c('5', '10', 'All')),pageLength = 5) 
+   )
+ })
+ 
+ 
+  
+  
+  
+  
+  #mytable 2: daily passenger table of passenger
+  output$mytable2 <- DT::renderDataTable({
+    
+    Datatable <- 
+      passenger_date() %>% 
+      mutate(
+        entry_single = round(entry_data/nchar(linename)),
+        exit_single = round(exit_data/nchar(linename)),
+        total = entry_single + exit_single
+      ) %>% 
+      group_by(date,station,start_time,end_time) %>% 
+      summarize(
+        Entry = sum(entry_single,na.rm = TRUE),
+        Exit  = sum(exit_single,na.rm = TRUE),
+        Total = sum(total,na.rm = TRUE),
+      ) %>% 
+      mutate(
+        Entry = unlist(Entry),
+        Exit  = unlist(Exit),
+        Total = unlist(Total)
+      ) %>% 
+      ungroup()
+    
+    
+    DT::datatable(Datatable, 
+                  options = list(lengthMenu = list(c(5, 15, -1), c('5', '15', 'All')),pageLength = 15) 
+    )
+  })
+  
+  
+  #mytable 3: daily passenger table of crime ({
+  output$mytable3 <- DT::renderDataTable({
+    Datatable3 <- 
+      subway_crime() %>%
+      select(-station_line) %>% 
+      arrange(date) %>% 
+      relocate(date)
+    
+    
+    
+    
+    DT::datatable(Datatable3, 
+                  options = list(lengthMenu = list(c(5, 15, -1), c('5', '15', 'All')),pageLength = 15) 
+    )
+  })
+ 
+  
+
+  
+}
+
+# Create Shiny app ----
+shinyApp(ui = ui, server = server)
+```
+
+
+
+date version
+```{r}
+library(shiny)
+library(tidyverse)
+library(lubridate)
+library(leaflet)
+library(plotly)
+library(shinyTime)
+
+# color
+pal <- colorFactor(palette = c("blue", "azure4", "orange",'green','brown','yellow','red','forestgreen','purple'), 
+              levels = c('8 Avenue(ACE)',
+                         'Shuttle(S)',
+                         '6 Avenue(BDFM)',
+                         'Brooklyn-Queens Crosstown(G)',
+                         '14 St-Canarsie(L)',
+                         'Broadway(NQRW)',
+                         '7 Avenue(123)',
+                         'Lexington Av(456)',
+                         'Flushing(7)'))
+
+
+
+# passenger data
+passenger <- read_csv("data/passenger.csv") 
+
+
+
+# crime data
+subwaycrime_with_station <- 
+  read_csv("data/subwaycrime_with_station.csv")  %>% 
+  filter(
+    cmplnt_to_dt != "NA"
+  ) %>% 
+  mutate(
+    date = mdy(cmplnt_to_dt),
+    linename = closest_line,
+    station = closest_station,
+    station_line = str_c(closest_station,closest_line,sep = " line:"),
+  ) %>% 
+  select(station_line,station,linename,ofns_desc,pd_desc,law_cat_cd,date)
+
+# station data
+subway_info_final3 <- read_csv("data/subway_info_final3.csv")
+
+# ui
+ui <- navbarPage(
+  title = "Subway Passenger",
+  # first Page
+  tabPanel(
+    "Line",
+    sidebarLayout( 
+      sidebarPanel(
+        h2("Choose Subway and Time"),
+        selectInput("subwayline", label = h4("Subway Lines"),
+                    choices = list("1" = 1,"2" = 2, "3" = 3,"4" = 4,"5" = 5,"6" = 6,"7" = 7,"A" = "A","B" = "B","C" = "C","D" = "D","E" = "E","F" = "F", "G" = "G","J" = "J","L" = "L","M" = "M","N" = "N","Q" = "Q","R" = "R","S" = "S","W" = "W","Z" = "Z"),
+                    selected = 1),
+        selectInput("input_type", "Input type",
+                    c("slider","date")),
+        uiOutput("ui"),
+        actionButton("update","Update"),
+      ), 
+      mainPanel(
+        h2("Single Line of Subway Passenger"),
+        tabsetPanel( 
+          tabPanel("Plot",  
+                   h3("Daily Passenger of Line in Map"),
+                   p("This is the map daily passenger of the line you are interested in "),
+                   
+                   leafletOutput(outputId = "mymap1",width = "100%",height = "800")), 
+          tabPanel("Passenger(Plot)", 
+                   h3("Daily Passenger of Each Station"),
+                   p("This is the plot daily passenger of each station in the line you are interested in "),
+                   plotlyOutput(outputId = "station"),
+          ),
+          tabPanel("Passenger(Table)", 
+                   wellPanel(
+                     h3("Daily Passenger of Line"),
+                     DT::dataTableOutput(outputId = "mytable1"),
+                     h3("Daily Passenger of Each Station"),
+                     DT::dataTableOutput(outputId = "mytable2")
+                   )
+          ),
+          tabPanel("Crime", 
+                   h3("Daily Passenger of Each Station"),
+                   p("This is the table of crime report in the line you are interested in "),
+                   DT::dataTableOutput(outputId = "mytable3"))
+        )
+      )
+    )
+  ),
+  tabPanel(
+    "Home",
+    href = "http://www.git.com"
+  )
+)
+
+
+
+server <- function(input, output) {
+  # choose of input
+  output$ui <- renderUI({
+    if (is.null(input$input_type))
+      return()
+    
+    switch(input$input_type,
+           "slider" = sliderInput("dates", "Date",
+                                  min = ymd("2021-01-01"),
+                                  max = ymd("2021-10-31"),
+                                  value = ymd("2021-01-01")),
+           "date" = dateInput("dates", "Date",
+                                        min = ymd("2021-01-01"),
+                                        max = ymd("2021-10-31"),
+                                        value = ymd("2021-01-01")
+           )
+           
+    )
+  })
+  
+  # input
+  specific_line <- reactive({as.character(input$subwayline)})  
+  specific_date <- reactive({ymd(input$dates)})
+  
+  
+  # action button
+  specific_time <- eventReactive(input$update,{hms(strftime(input$time,"%T"))})
+  
+  passenger_date <- eventReactive(input$update,{
+    passenger %>% 
+      filter(
+        date == specific_date(),
+        str_detect(linename,specific_line())
+      ) %>% 
+      mutate(
+        total = entry_data + exit_data
+      ) %>% 
+      relocate(station,linename,date)
+    
+  }
+  )
+  
+  subway_crime <- eventReactive(input$update,{
+    subwaycrime_with_station %>% 
+      filter(date == specific_date(),
+             str_detect(linename,specific_line()))
+  })
+  
+
+
+  
+  
+ # maymap1: daily passenger in map
+ output$mymap1 <- renderLeaflet({
+   
+   passenger_date <- 
+     left_join(passenger_date(),subway_info_final3,by=c("station","linename"))
+   
+#   if (hour(specific_time()) >= 7 & hour(specific_time()) < 17 ){
+   passenger_date %>% 
+     mutate(
+       click_label = 
+         str_c("<b>Station:", station, "</b><br>Line:", linename, " <br>Entry:", round(entry_data)," <br>Exit:", round(exit_data),"<br>Total:", round(total))
+     ) %>% 
+     leaflet() %>% 
+     addProviderTiles(providers$CartoDB.Positron) %>% 
+     addCircleMarkers(~long, 
+                      ~lat, 
+                      radius = ~log(total)/2, 
+                      color = ~pal(service), 
+                      popup = ~click_label)
+
+   
+ })
+ 
+ # station: plot of daily station passenger
+ output$station <- renderPlotly({
+   passenger_date <- 
+     left_join(passenger_date(),subway_info_final3,by = c("station","linename"))
+   
+   passenger_date %>% 
+     mutate(
+       entry_single = round(entry_data/nchar(linename)),
+       exit_single  = round(exit_data/nchar(linename)),
+       total        = entry_single + exit_single,
+       station_line      = fct_reorder(station_line,total)
+     ) %>% 
+     plot_ly(
+       x = ~station_line, y = ~total,type = "bar",alpha = 0.5, color = ~pal(service), width = 800, height = 800
+     ) %>% 
+     layout(autosize = F,showlegend = FALSE) 
+   
+ })
+ 
+ #mytable 1: daily passenger table of line passenger
+ output$mytable1 <- DT::renderDataTable({
+   
+   Datatable <- 
+     passenger_date() %>% 
+     mutate(
+       entry_single = round(entry_data/nchar(linename)),
+       exit_single = round(exit_data/nchar(linename)),
+       total = entry_single + exit_single
+     ) %>% 
+     group_by(date) %>% 
+     summarize(Entry = sum(entry_single,na.rm = TRUE),
+               Exit  = sum(exit_single,na.rm = TRUE),
+               Total = sum(total,na.rm = TRUE),
+     ) %>% 
+     mutate(Entry = unlist(Entry),
+            Exit  = unlist(Exit),
+            Total = unlist(Total)) %>% 
+     ungroup()
+   
+   
+   DT::datatable(Datatable, 
+                 options = list(lengthMenu = list(c(5, 10, -1), c('5', '10', 'All')),pageLength = 5) 
+   )
+ })
+ 
+ 
+  
+  
+  
+  
+  #mytable 2: daily passenger table of passenger
+  output$mytable2 <- DT::renderDataTable({
+    
+    Datatable <- 
+      passenger_date() %>% 
+      mutate(
+        entry_single = round(entry_data/nchar(linename)),
+        exit_single = round(exit_data/nchar(linename)),
+        total = entry_single + exit_single
+      ) %>% 
+      group_by(date,station) %>% 
+      summarize(
+        Entry = sum(entry_single,na.rm = TRUE),
+        Exit  = sum(exit_single,na.rm = TRUE),
+        Total = sum(total,na.rm = TRUE),
+      ) %>% 
+      mutate(
+        Entry = unlist(Entry),
+        Exit  = unlist(Exit),
+        Total = unlist(Total)
+      ) %>% 
+      ungroup()
+    
+    
+    DT::datatable(Datatable, 
+                  options = list(lengthMenu = list(c(5, 15, -1), c('5', '15', 'All')),pageLength = 15) 
+    )
+  })
+  
+  
+  #mytable 3: daily passenger table of crime ({
+  output$mytable3 <- DT::renderDataTable({
+    Datatable3 <- 
+      subway_crime() %>%
+      select(-station_line) %>% 
+      arrange(date) %>% 
+      relocate(date)
+    
+    
+    
+    
+    DT::datatable(Datatable3, 
+                  options = list(lengthMenu = list(c(5, 15, -1), c('5', '15', 'All')),pageLength = 15) 
+    )
+  })
+ 
+  
+
+  
+}
+
+# Create Shiny app ----
+shinyApp(ui = ui, server = server)
+```
+
